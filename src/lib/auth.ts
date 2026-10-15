@@ -12,6 +12,7 @@ import {
 import { CHALLENGE_TTL, SESSION_TTL, configuration } from './config';
 import { transaction } from './db';
 
+// APIへ返すエラーコード・HTTPステータスと、開発時だけ表示する詳細をまとめる。
 export class AuthError extends Error {
   constructor(
     public code: string,
@@ -22,7 +23,10 @@ export class AuthError extends Error {
     super(message);
   }
 }
+
 export type User = { id: string; username: string; created_at: number };
+
+// ceremonyは、登録・追加登録・認証の開始から検証までを結び付ける一時情報。
 type Ceremony = {
   kind: 'register' | 'add' | 'authenticate';
   challenge: string;
@@ -31,6 +35,8 @@ type Ceremony = {
   session_hash: string | null;
   expires_at: number;
 };
+
+// SQLiteの列名と保存形式に合わせた型。秘密鍵は含まれない。
 type StoredCredential = {
   id: string;
   user_id: string;
@@ -42,9 +48,13 @@ type StoredCredential = {
   created_at: number;
   last_used_at: number | null;
 };
+
+// Cookieの生値をDBへ保存せず、照合にはSHA-256ハッシュを使う。
 export const hash = (value: string) =>
   createHash('sha256').update(value).digest('hex');
+
 const createToken = () => randomBytes(32).toString('base64url');
+
 export type Trace = {
   side: 'server';
   action: string;
@@ -52,11 +62,14 @@ export type Trace = {
   result: 'passed' | 'failed' | 'info';
   details?: unknown;
 };
+
+// チャレンジの消費、WebAuthn検証、DB更新の順序をここで管理する。
 export class AuthService {
   constructor(
     readonly db: DatabaseSync,
     readonly now = () => Date.now(),
   ) {}
+
   cleanup() {
     this.db
       .prepare('DELETE FROM ceremonies WHERE expires_at <= ?')
@@ -68,6 +81,8 @@ export class AuthService {
 
   session(sessionToken?: string): User | undefined {
     if (!sessionToken) return;
+
+    // Cookieが残っていても、サーバー側の期限を過ぎたセッションは認めない。
     return this.db
       .prepare(
         `SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id
@@ -80,6 +95,7 @@ export class AuthService {
     const user = this.session(sessionToken);
     if (!user)
       throw new AuthError('SESSION_REQUIRED', 'ログインが必要です。', 401);
+
     return user;
   }
 
@@ -88,6 +104,8 @@ export class AuthService {
       this.db
         .prepare('DELETE FROM sessions WHERE token_hash=?')
         .run(hash(sessionToken));
+
+      // ログアウトしたセッションから始めたパスキー追加も無効にする。
       this.db
         .prepare('DELETE FROM ceremonies WHERE session_hash=?')
         .run(hash(sessionToken));
@@ -100,6 +118,8 @@ export class AuthService {
         'SELECT * FROM credentials WHERE user_id=? ORDER BY created_at DESC',
       )
       .all(userID) as StoredCredential[];
+
+    // 一覧画面で使う情報に絞り、検証用の公開鍵はAPIへ返さない。
     return rows.map((credential) => ({
       id: credential.id,
       counter: credential.counter,
@@ -112,16 +132,20 @@ export class AuthService {
   }
 
   private issueSession(userID: string, previous?: string) {
+    // 認証成功時は以前のセッションを失効させ、新しいトークンに入れ替える。
     this.logout(previous);
+
     const sessionToken = createToken();
     this.db
       .prepare('INSERT INTO sessions VALUES (?, ?, ?)')
       .run(hash(sessionToken), userID, this.now() + SESSION_TTL);
+
     return sessionToken;
   }
 
   invalidateCeremony(ceremonyToken?: string) {
     if (!ceremonyToken) return;
+
     this.db
       .prepare('DELETE FROM ceremonies WHERE token_hash=?')
       .run(hash(ceremonyToken));
@@ -132,7 +156,10 @@ export class AuthService {
     previous?: string,
   ) {
     this.cleanup();
+
+    // 同じブラウザでやり直した場合、直前のチャレンジを使えなくする。
     this.invalidateCeremony(previous);
+
     const ceremonyToken = createToken();
     this.db
       .prepare('INSERT INTO ceremonies VALUES (?, ?, ?, ?, ?, ?, ?)')
@@ -145,6 +172,7 @@ export class AuthService {
         ceremony.session_hash,
         this.now() + CHALLENGE_TTL,
       );
+
     return ceremonyToken;
   }
 
@@ -158,22 +186,29 @@ export class AuthService {
         'CEREMONY_MISSING',
         'チャレンジがありません。使用済みの場合は再送を拒否します。',
       );
-    // Atomic deletion before any async verification: failed attempts also consume the challenge.
+
+    // 非同期の検証より先に、取得と削除を1つのSQLで行う。
+    // 並行する再送を防ぎ、検証に失敗したチャレンジも再利用させない。
     const ceremony = this.db
       .prepare('DELETE FROM ceremonies WHERE token_hash=? RETURNING *')
       .get(hash(ceremonyToken)) as Ceremony | undefined;
+
     if (!ceremony)
       throw new AuthError(
         'CEREMONY_USED',
         'チャレンジは使用済み、または存在しません。',
       );
+
     if (ceremony.expires_at <= this.now())
       throw new AuthError(
         'CEREMONY_EXPIRED',
         'チャレンジの有効期限が切れています。',
       );
+
     if (ceremony.kind !== kind)
       throw new AuthError('CEREMONY_KIND', '処理の種類が一致しません。');
+
+    // 追加登録は、開始したときと同じセッション・同じ所有者に限る。
     if (
       kind === 'add' &&
       (ceremony.session_hash !== hash(session ?? '') ||
@@ -185,6 +220,7 @@ export class AuthService {
         401,
       );
     }
+
     return ceremony;
   }
 
@@ -192,6 +228,7 @@ export class AuthService {
     const existingUser = this.db
       .prepare('SELECT 1 FROM users WHERE username=?')
       .get(username);
+
     if (existingUser) {
       throw new AuthError(
         'USERNAME_TAKEN',
@@ -207,6 +244,7 @@ export class AuthService {
     session?: string,
     previous?: string,
   ) {
+    // 新規登録ではIDだけを予約し、応答の検証が成功するまでユーザーを保存しない。
     let user: Pick<User, 'id' | 'username'>;
     if (addingPasskey) user = this.requireSession(session);
     else {
@@ -220,9 +258,11 @@ export class AuthService {
         );
       }
       this.requireAvailableUsername(username);
+
       user = { id: createToken(), username };
     }
     const config = configuration();
+
     const options = await generateRegistrationOptions({
       rpName: config.rpName,
       rpID: config.rpID,
@@ -242,6 +282,8 @@ export class AuthService {
           }))
         : [],
     });
+
+    // ブラウザへ渡すchallengeと、HttpOnly Cookieで戻るトークンを対応付ける。
     const ceremony = this.saveCeremony(
       {
         kind: addingPasskey ? 'add' : 'register',
@@ -252,16 +294,20 @@ export class AuthService {
       },
       previous,
     );
+
     return { options, ceremony };
   }
 
   async authenticationOptions(previous?: string) {
+    // credentialを限定せず、認証器に保存されたパスキーを利用者に選んでもらう。
     const options = await generateAuthenticationOptions({
       rpID: configuration().rpID,
       userVerification: 'required',
       allowCredentials: [],
       timeout: CHALLENGE_TTL,
     });
+
+    // ブラウザへ渡すchallengeと、HttpOnly Cookieで戻るトークンを対応付ける。
     const ceremony = this.saveCeremony(
       {
         kind: 'authenticate',
@@ -272,6 +318,7 @@ export class AuthService {
       },
       previous,
     );
+
     return { options, ceremony };
   }
 
@@ -288,6 +335,8 @@ export class AuthService {
       session,
     );
     this.traceConsumed(trace, ceremony);
+
+    // ブラウザが返した内容を信用せず、保存した期待値と照合する。
     const config = configuration();
     const result = await this.verify(() =>
       verifyRegistrationResponse({
@@ -300,14 +349,19 @@ export class AuthService {
         supportedAlgorithmIDs: [-7, -257],
       }),
     );
+
     if (!result.verified || !result.registrationInfo)
       throw new AuthError(
         'REGISTRATION_REJECTED',
         '登録レスポンスを検証できません。',
       );
+
     const info = result.registrationInfo;
     this.traceVerified(trace, 'register');
+
+    // ユーザー・公開鍵・初回セッションを一括保存し、途中失敗で片方だけ残さない。
     const newSession = transaction(this.db, () => {
+      // 非同期検証を待つ間のログアウトや、同名ユーザーの作成を再確認する。
       if (addingPasskey) this.requireSession(session);
       else {
         this.requireAvailableUsername(ceremony.username!);
@@ -315,6 +369,7 @@ export class AuthService {
           .prepare('INSERT INTO users VALUES (?, ?, ?)')
           .run(ceremony.user_id!, ceremony.username!, this.now());
       }
+
       this.db
         .prepare(
           `INSERT INTO credentials
@@ -330,16 +385,20 @@ export class AuthService {
           Number(info.credentialBackedUp),
           this.now(),
         );
+
+      // 追加登録では現在のセッションをそのまま使う。
       return addingPasskey
         ? undefined
         : this.issueSession(ceremony.user_id!, session);
     });
+
     trace.push({
       side: 'server',
       action: 'DB commit',
       purpose: 'ユーザーと公開鍵を一括保存。秘密鍵は受信・保存しない。',
       result: 'passed',
     });
+
     return { session: newSession };
   }
 
@@ -351,15 +410,18 @@ export class AuthService {
   ) {
     const ceremony = this.consumeCeremony(ceremonyToken, 'authenticate');
     this.traceConsumed(trace, ceremony);
+
     const stored = this.db
       .prepare('SELECT * FROM credentials WHERE id=?')
       .get(response.id) as StoredCredential | undefined;
+
     if (!stored)
       throw new AuthError(
         'CREDENTIAL_UNKNOWN',
         '登録済みのパスキーを確認できません。',
       );
-    // Username-less login must bind the returned user handle to the credential owner.
+
+    // ユーザー名を受け取らない認証なので、userHandleと保存済みcredentialの所有者を照合する。
     if (
       !response.response.userHandle ||
       response.response.userHandle !== stored.user_id
@@ -385,15 +447,19 @@ export class AuthService {
         },
       }),
     );
+
     if (!result.verified)
       throw new AuthError(
         'AUTHENTICATION_REJECTED',
         '署名の検証に失敗しました。',
       );
+
     this.traceVerified(trace, 'authenticate');
     const info = result.authenticationInfo;
+
     const newSession = transaction(this.db, () => {
-      // Compare-and-swap prevents concurrent responses from overwriting a newer counter.
+      // 読み取り時のカウンターと一致するときだけ更新する。
+      // 別の認証が先に成功した場合、古い応答で新しい値を上書きしない。
       const updated = this.db
         .prepare(
           `UPDATE credentials SET counter=?, backed_up=?, device_type=?, last_used_at=?
@@ -407,13 +473,17 @@ export class AuthService {
           stored.id,
           stored.counter,
         );
+
       if (updated.changes !== 1)
         throw new AuthError(
           'COUNTER_RACE',
           '認証状態が更新されました。再度認証してください。',
         );
+
+      // カウンター更新とセッション発行は、両方とも成功したときだけ確定する。
       return this.issueSession(stored.user_id, previousSession);
     });
+
     trace.push({
       side: 'server',
       action: 'セッション発行',
@@ -426,6 +496,7 @@ export class AuthService {
         userVerified: info.userVerified,
       },
     });
+
     return { session: newSession };
   }
 
@@ -433,6 +504,7 @@ export class AuthService {
     try {
       return await work();
     } catch (error) {
+      // ライブラリの詳細エラーは開発用に残し、通常の応答は共通メッセージにする。
       throw new AuthError(
         'WEBAUTHN_REJECTED',
         'WebAuthnレスポンスの検証に失敗しました。',

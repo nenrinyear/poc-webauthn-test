@@ -17,6 +17,7 @@ import type {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
 const supportedPostPaths = [
   'register/options',
   'register/verify',
@@ -26,20 +27,25 @@ const supportedPostPaths = [
   'authenticate/verify',
   'logout',
 ];
+
+// ログイン中のユーザーと、公開鍵を除いたパスキー一覧を返す。
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ path: string[] }> },
 ) {
   const path = (await context.params).path.join('/');
   if (path !== 'me') return json({ error: 'Not found' }, 404);
+
   const service = new AuthService(database());
   const user = service.session(request.cookies.get(SESSION_COOKIE)?.value);
   if (!user) return json({ user: null }, 401);
+
   return json({
     user: { username: user.username, createdAt: user.created_at },
     passkeys: service.list(user.id),
   });
 }
+
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ path: string[] }> },
@@ -47,12 +53,16 @@ export async function POST(
   const path = (await context.params).path.join('/');
   if (!supportedPostPaths.includes(path))
     return json({ error: 'Not found' }, 404);
+
   const trace: Trace[] = [];
+
   const service = new AuthService(database());
   const session = request.cookies.get(SESSION_COOKIE)?.value;
   const ceremony = request.cookies.get(CEREMONY_COOKIE)?.value;
   const isVerificationRequest = path.endsWith('/verify');
+
   try {
+    // HTTPリクエスト自体のOriginを確認する。WebAuthn応答内のOrigin検証とは別の確認。
     if (request.headers.get('origin') !== configuration().origin) {
       throw new AuthError(
         'REQUEST_ORIGIN',
@@ -60,9 +70,12 @@ export async function POST(
         403,
       );
     }
+
     const body = await readJsonBody(request);
     let response: NextResponse;
+
     if (path.endsWith('/options')) {
+      // 開始: challengeを保存し、対応するフロートークンをCookieへ設定する。
       const result =
         path === 'authenticate/options'
           ? await service.authenticationOptions(ceremony)
@@ -72,6 +85,7 @@ export async function POST(
               session,
               ceremony,
             );
+
       trace.push({
         side: 'server',
         action: 'options生成',
@@ -85,6 +99,7 @@ export async function POST(
           userVerification: 'required',
         },
       });
+
       response = json({
         options: result.options,
         ...(isDevelopment() ? { trace } : {}),
@@ -94,6 +109,7 @@ export async function POST(
         maxAge: CHALLENGE_TTL / 1000,
       });
     } else if (isVerificationRequest) {
+      // 完了: 外形を確認してから、詳細な検証をAuthServiceへ委ねる。
       const credential = body.credential;
       if (
         !credential ||
@@ -107,6 +123,7 @@ export async function POST(
           'credentialの形式が不正です。',
         );
       }
+
       const result =
         path === 'authenticate/verify'
           ? await service.authenticate(
@@ -122,6 +139,7 @@ export async function POST(
               session,
               trace,
             );
+
       response = json({
         verified: true,
         ...(isDevelopment() ? { trace } : {}),
@@ -130,14 +148,18 @@ export async function POST(
         ...cookieOptions(),
         maxAge: 0,
       });
+
+      // 追加登録では新しいセッションが返らないため、既存Cookieを維持する。
       if (result.session)
         response.cookies.set(SESSION_COOKIE, result.session, {
           ...cookieOptions(),
           maxAge: SESSION_TTL / 1000,
         });
     } else {
+      // logout: DB上のセッション・進行中のフローと、両方のCookieを消す。
       service.logout(session);
       service.invalidateCeremony(ceremony);
+
       response = json({ ok: true });
       response.cookies.set(SESSION_COOKIE, '', {
         ...cookieOptions(),
@@ -148,14 +170,17 @@ export async function POST(
         maxAge: 0,
       });
     }
+
     return response;
   } catch (error) {
+    // 想定外の内部エラーの内容を、通常のAPIレスポンスへ漏らさない。
     const expected = error instanceof AuthError;
     const status = expected ? error.status : 500;
     const code = expected ? error.code : 'REQUEST_FAILED';
     const message = expected
       ? error.message
       : '処理を完了できませんでした。最初からやり直してください。';
+
     if (isDevelopment())
       trace.push({
         side: 'server',
@@ -169,10 +194,13 @@ export async function POST(
             : 'サーバー内部エラー',
         },
       });
+
     const response = json(
       { error: message, code, ...(isDevelopment() ? { trace } : {}) },
       status,
     );
+
+    // 検証失敗時もフローを終了する。ログイン済みのセッションは失効させない。
     if (isVerificationRequest) {
       service.invalidateCeremony(ceremony);
       response.cookies.set(CEREMONY_COOKIE, '', {
@@ -180,6 +208,7 @@ export async function POST(
         maxAge: 0,
       });
     }
+
     return response;
   }
 }
