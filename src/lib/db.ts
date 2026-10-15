@@ -3,7 +3,8 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 export function openDatabase(path: string) {
-  if (path !== ':memory:') mkdirSync(dirname(resolve(path)), { recursive: true, mode: 0o700 });
+  if (path !== ':memory:')
+    mkdirSync(dirname(resolve(path)), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(path);
   db.exec(`
     PRAGMA foreign_keys = ON;
@@ -33,10 +34,18 @@ export function openDatabase(path: string) {
 }
 const globalDB = globalThis as typeof globalThis & { labDB?: DatabaseSync };
 export function database() {
-  return globalDB.labDB ??= openDatabase(process.env.DATABASE_PATH ?? './data/lab.sqlite');
+  return (globalDB.labDB ??= openDatabase(
+    process.env.DATABASE_PATH ?? './data/lab.sqlite',
+  ));
 }
 export function transaction<T>(db: DatabaseSync, work: () => T): T {
   db.exec('BEGIN IMMEDIATE');
-  try { const result = work(); db.exec('COMMIT'); return result; }
-  catch (error) { db.exec('ROLLBACK'); throw error; }
+  try {
+    const result = work();
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
