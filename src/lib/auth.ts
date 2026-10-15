@@ -31,7 +31,7 @@ type Ceremony = {
   session_hash: string | null;
   expires_at: number;
 };
-type Credential = {
+type StoredCredential = {
   id: string;
   user_id: string;
   public_key: Uint8Array;
@@ -44,7 +44,7 @@ type Credential = {
 };
 export const hash = (value: string) =>
   createHash('sha256').update(value).digest('hex');
-const token = () => randomBytes(32).toString('base64url');
+const createToken = () => randomBytes(32).toString('base64url');
 export type Trace = {
   side: 'server';
   action: string;
@@ -65,103 +65,119 @@ export class AuthService {
       .prepare('DELETE FROM sessions WHERE expires_at <= ?')
       .run(this.now());
   }
-  session(raw?: string): User | undefined {
-    if (!raw) return;
+
+  session(sessionToken?: string): User | undefined {
+    if (!sessionToken) return;
     return this.db
       .prepare(
         `SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id
       WHERE s.token_hash=? AND s.expires_at>?`,
       )
-      .get(hash(raw), this.now()) as User | undefined;
+      .get(hash(sessionToken), this.now()) as User | undefined;
   }
-  requireSession(raw?: string) {
-    const user = this.session(raw);
+
+  requireSession(sessionToken?: string) {
+    const user = this.session(sessionToken);
     if (!user)
       throw new AuthError('SESSION_REQUIRED', 'ログインが必要です。', 401);
     return user;
   }
-  logout(raw?: string) {
-    if (raw) {
-      this.db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(raw));
+
+  logout(sessionToken?: string) {
+    if (sessionToken) {
+      this.db
+        .prepare('DELETE FROM sessions WHERE token_hash=?')
+        .run(hash(sessionToken));
       this.db
         .prepare('DELETE FROM ceremonies WHERE session_hash=?')
-        .run(hash(raw));
+        .run(hash(sessionToken));
     }
   }
+
   list(userID: string) {
     const rows = this.db
       .prepare(
         'SELECT * FROM credentials WHERE user_id=? ORDER BY created_at DESC',
       )
-      .all(userID) as Credential[];
-    return rows.map((c) => ({
-      id: c.id,
-      counter: c.counter,
-      transports: JSON.parse(c.transports),
-      deviceType: c.device_type,
-      backedUp: !!c.backed_up,
-      createdAt: c.created_at,
-      lastUsedAt: c.last_used_at,
+      .all(userID) as StoredCredential[];
+    return rows.map((credential) => ({
+      id: credential.id,
+      counter: credential.counter,
+      transports: JSON.parse(credential.transports) as AuthenticatorTransport[],
+      deviceType: credential.device_type,
+      backedUp: Boolean(credential.backed_up),
+      createdAt: credential.created_at,
+      lastUsedAt: credential.last_used_at,
     }));
   }
+
   private issueSession(userID: string, previous?: string) {
     this.logout(previous);
-    const raw = token();
+    const sessionToken = createToken();
     this.db
       .prepare('INSERT INTO sessions VALUES (?, ?, ?)')
-      .run(hash(raw), userID, this.now() + SESSION_TTL);
-    return raw;
+      .run(hash(sessionToken), userID, this.now() + SESSION_TTL);
+    return sessionToken;
   }
-  private saveCeremony(c: Omit<Ceremony, 'expires_at'>, previous?: string) {
+
+  invalidateCeremony(ceremonyToken?: string) {
+    if (!ceremonyToken) return;
+    this.db
+      .prepare('DELETE FROM ceremonies WHERE token_hash=?')
+      .run(hash(ceremonyToken));
+  }
+
+  private saveCeremony(
+    ceremony: Omit<Ceremony, 'expires_at'>,
+    previous?: string,
+  ) {
     this.cleanup();
-    if (previous)
-      this.db
-        .prepare('DELETE FROM ceremonies WHERE token_hash=?')
-        .run(hash(previous));
-    const raw = token();
+    this.invalidateCeremony(previous);
+    const ceremonyToken = createToken();
     this.db
       .prepare('INSERT INTO ceremonies VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(
-        hash(raw),
-        c.kind,
-        c.challenge,
-        c.user_id,
-        c.username,
-        c.session_hash,
+        hash(ceremonyToken),
+        ceremony.kind,
+        ceremony.challenge,
+        ceremony.user_id,
+        ceremony.username,
+        ceremony.session_hash,
         this.now() + CHALLENGE_TTL,
       );
-    return raw;
+    return ceremonyToken;
   }
-  private consume(
-    raw: string | undefined,
+
+  private consumeCeremony(
+    ceremonyToken: string | undefined,
     kind: Ceremony['kind'],
     session?: string,
   ) {
-    if (!raw)
+    if (!ceremonyToken)
       throw new AuthError(
         'CEREMONY_MISSING',
         'チャレンジがありません。使用済みの場合は再送を拒否します。',
       );
     // Atomic deletion before any async verification: failed attempts also consume the challenge.
-    const c = this.db
+    const ceremony = this.db
       .prepare('DELETE FROM ceremonies WHERE token_hash=? RETURNING *')
-      .get(hash(raw)) as Ceremony | undefined;
-    if (!c)
+      .get(hash(ceremonyToken)) as Ceremony | undefined;
+    if (!ceremony)
       throw new AuthError(
         'CEREMONY_USED',
         'チャレンジは使用済み、または存在しません。',
       );
-    if (c.expires_at <= this.now())
+    if (ceremony.expires_at <= this.now())
       throw new AuthError(
         'CEREMONY_EXPIRED',
         'チャレンジの有効期限が切れています。',
       );
-    if (c.kind !== kind)
+    if (ceremony.kind !== kind)
       throw new AuthError('CEREMONY_KIND', '処理の種類が一致しません。');
     if (
       kind === 'add' &&
-      (c.session_hash !== hash(session ?? '') ||
-        this.requireSession(session).id !== c.user_id)
+      (ceremony.session_hash !== hash(session ?? '') ||
+        this.requireSession(session).id !== ceremony.user_id)
     ) {
       throw new AuthError(
         'SESSION_MISMATCH',
@@ -169,16 +185,30 @@ export class AuthService {
         401,
       );
     }
-    return c;
+    return ceremony;
   }
+
+  private requireAvailableUsername(username: string) {
+    const existingUser = this.db
+      .prepare('SELECT 1 FROM users WHERE username=?')
+      .get(username);
+    if (existingUser) {
+      throw new AuthError(
+        'USERNAME_TAKEN',
+        'このユーザー名は使用されています。',
+        409,
+      );
+    }
+  }
+
   async registrationOptions(
     username: unknown,
-    add: boolean,
+    addingPasskey: boolean,
     session?: string,
     previous?: string,
   ) {
     let user: Pick<User, 'id' | 'username'>;
-    if (add) user = this.requireSession(session);
+    if (addingPasskey) user = this.requireSession(session);
     else {
       if (
         typeof username !== 'string' ||
@@ -189,16 +219,8 @@ export class AuthService {
           'ユーザー名は英数字・_・-の3〜32文字で指定してください。',
         );
       }
-      if (
-        this.db.prepare('SELECT 1 FROM users WHERE username=?').get(username)
-      ) {
-        throw new AuthError(
-          'USERNAME_TAKEN',
-          'このユーザー名は使用されています。',
-          409,
-        );
-      }
-      user = { id: token(), username };
+      this.requireAvailableUsername(username);
+      user = { id: createToken(), username };
     }
     const config = configuration();
     const options = await generateRegistrationOptions({
@@ -213,25 +235,26 @@ export class AuthService {
         residentKey: 'required',
         userVerification: 'required',
       },
-      excludeCredentials: add
-        ? this.list(user.id).map((c) => ({
-            id: c.id,
-            transports: c.transports,
+      excludeCredentials: addingPasskey
+        ? this.list(user.id).map((credential) => ({
+            id: credential.id,
+            transports: credential.transports,
           }))
         : [],
     });
     const ceremony = this.saveCeremony(
       {
-        kind: add ? 'add' : 'register',
+        kind: addingPasskey ? 'add' : 'register',
         challenge: options.challenge,
         user_id: user.id,
         username: user.username,
-        session_hash: add ? hash(session!) : null,
+        session_hash: addingPasskey ? hash(session!) : null,
       },
       previous,
     );
     return { options, ceremony };
   }
+
   async authenticationOptions(previous?: string) {
     const options = await generateAuthenticationOptions({
       rpID: configuration().rpID,
@@ -251,20 +274,25 @@ export class AuthService {
     );
     return { options, ceremony };
   }
+
   async register(
     response: RegistrationResponseJSON,
-    add: boolean,
-    raw?: string,
+    addingPasskey: boolean,
+    ceremonyToken?: string,
     session?: string,
     trace: Trace[] = [],
   ) {
-    const c = this.consume(raw, add ? 'add' : 'register', session);
-    this.traceConsumed(trace, c);
+    const ceremony = this.consumeCeremony(
+      ceremonyToken,
+      addingPasskey ? 'add' : 'register',
+      session,
+    );
+    this.traceConsumed(trace, ceremony);
     const config = configuration();
     const result = await this.verify(() =>
       verifyRegistrationResponse({
         response,
-        expectedChallenge: c.challenge,
+        expectedChallenge: ceremony.challenge,
         expectedOrigin: config.origin,
         expectedRPID: config.rpID,
         requireUserVerification: true,
@@ -278,24 +306,14 @@ export class AuthService {
         '登録レスポンスを検証できません。',
       );
     const info = result.registrationInfo;
-    this.traceVerified(trace, false);
+    this.traceVerified(trace, 'register');
     const newSession = transaction(this.db, () => {
-      if (add) this.requireSession(session);
+      if (addingPasskey) this.requireSession(session);
       else {
-        if (
-          this.db
-            .prepare('SELECT 1 FROM users WHERE username=?')
-            .get(c.username!)
-        ) {
-          throw new AuthError(
-            'USERNAME_TAKEN',
-            'このユーザー名は使用されています。',
-            409,
-          );
-        }
+        this.requireAvailableUsername(ceremony.username!);
         this.db
           .prepare('INSERT INTO users VALUES (?, ?, ?)')
-          .run(c.user_id!, c.username!, this.now());
+          .run(ceremony.user_id!, ceremony.username!, this.now());
       }
       this.db
         .prepare(
@@ -304,15 +322,17 @@ export class AuthService {
         )
         .run(
           info.credential.id,
-          c.user_id!,
+          ceremony.user_id!,
           info.credential.publicKey,
           info.credential.counter,
           JSON.stringify(info.credential.transports ?? []),
           info.credentialDeviceType,
-          +info.credentialBackedUp,
+          Number(info.credentialBackedUp),
           this.now(),
         );
-      return add ? undefined : this.issueSession(c.user_id!, session);
+      return addingPasskey
+        ? undefined
+        : this.issueSession(ceremony.user_id!, session);
     });
     trace.push({
       side: 'server',
@@ -322,17 +342,18 @@ export class AuthService {
     });
     return { session: newSession };
   }
+
   async authenticate(
     response: AuthenticationResponseJSON,
-    raw?: string,
+    ceremonyToken?: string,
     previousSession?: string,
     trace: Trace[] = [],
   ) {
-    const c = this.consume(raw, 'authenticate');
-    this.traceConsumed(trace, c);
+    const ceremony = this.consumeCeremony(ceremonyToken, 'authenticate');
+    this.traceConsumed(trace, ceremony);
     const stored = this.db
       .prepare('SELECT * FROM credentials WHERE id=?')
-      .get(response.id) as Credential | undefined;
+      .get(response.id) as StoredCredential | undefined;
     if (!stored)
       throw new AuthError(
         'CREDENTIAL_UNKNOWN',
@@ -352,7 +373,7 @@ export class AuthService {
     const result = await this.verify(() =>
       verifyAuthenticationResponse({
         response,
-        expectedChallenge: c.challenge,
+        expectedChallenge: ceremony.challenge,
         expectedOrigin: config.origin,
         expectedRPID: config.rpID,
         requireUserVerification: true,
@@ -369,7 +390,7 @@ export class AuthService {
         'AUTHENTICATION_REJECTED',
         '署名の検証に失敗しました。',
       );
-    this.traceVerified(trace, true);
+    this.traceVerified(trace, 'authenticate');
     const info = result.authenticationInfo;
     const newSession = transaction(this.db, () => {
       // Compare-and-swap prevents concurrent responses from overwriting a newer counter.
@@ -380,7 +401,7 @@ export class AuthService {
         )
         .run(
           info.newCounter,
-          +info.credentialBackedUp,
+          Number(info.credentialBackedUp),
           info.credentialDeviceType,
           this.now(),
           stored.id,
@@ -407,6 +428,7 @@ export class AuthService {
     });
     return { session: newSession };
   }
+
   private async verify<T>(work: () => Promise<T>): Promise<T> {
     try {
       return await work();
@@ -421,7 +443,8 @@ export class AuthService {
       );
     }
   }
-  private traceConsumed(trace: Trace[], c: Ceremony) {
+
+  private traceConsumed(trace: Trace[], ceremony: Ceremony) {
     trace.push({
       side: 'server',
       action: 'チャレンジの消費',
@@ -429,20 +452,22 @@ export class AuthService {
         '期限・用途を確認し、検証前にDBから削除して再送と並行利用を防ぐ。',
       result: 'passed',
       details: {
-        expectedChallenge: c.challenge,
+        expectedChallenge: ceremony.challenge,
         expectedOrigin: configuration().origin,
         expectedRPID: configuration().rpID,
       },
     });
   }
-  private traceVerified(trace: Trace[], authentication: boolean) {
+
+  private traceVerified(trace: Trace[], kind: 'register' | 'authenticate') {
     trace.push({
       side: 'server',
       action: 'SimpleWebAuthnによる検証',
       result: 'passed',
-      purpose: authentication
-        ? '保存済み公開鍵で署名を検証。challenge・Origin・rpIdHash・UP・UV・カウンターを確認。'
-        : 'challenge・Origin・rpIdHash・UP・UV・認証器データ・公開鍵の形式を確認。attestation=noneは認証器の出自を保証しない。',
+      purpose:
+        kind === 'authenticate'
+          ? '保存済み公開鍵で署名を検証。challenge・Origin・rpIdHash・UP・UV・カウンターを確認。'
+          : 'challenge・Origin・rpIdHash・UP・UV・認証器データ・公開鍵の形式を確認。attestation=noneは認証器の出自を保証しない。',
     });
   }
 }

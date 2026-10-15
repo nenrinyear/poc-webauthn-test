@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AuthService, AuthError, hash, type Trace } from '@/lib/auth';
+import { AuthService, AuthError, type Trace } from '@/lib/auth';
+import { cookieOptions, json, readJsonBody } from '@/lib/auth-http';
 import { database } from '@/lib/db';
 import {
   CEREMONY_COOKIE,
@@ -16,7 +17,7 @@ import type {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-const paths = [
+const supportedPostPaths = [
   'register/options',
   'register/verify',
   'passkeys/options',
@@ -25,51 +26,6 @@ const paths = [
   'authenticate/verify',
   'logout',
 ];
-const cookieOptions = () => ({
-  httpOnly: true,
-  sameSite: 'strict' as const,
-  secure: configuration().secure,
-  path: '/',
-});
-function json(value: unknown, status = 200) {
-  return NextResponse.json(value, {
-    status,
-    headers: { 'Cache-Control': 'no-store' },
-  });
-}
-async function bodyOf(request: Request): Promise<Record<string, unknown>> {
-  if (
-    !request.headers
-      .get('content-type')
-      ?.toLowerCase()
-      .startsWith('application/json')
-  ) {
-    throw new AuthError('CONTENT_TYPE', 'application/jsonが必要です。', 415);
-  }
-  const reader = request.body?.getReader();
-  if (!reader) throw new AuthError('BODY_MISSING', 'JSONボディが必要です。');
-  let size = 0;
-  const chunks: Uint8Array[] = [];
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > 64 * 1024) {
-      await reader.cancel();
-      throw new AuthError('BODY_TOO_LARGE', 'リクエストが大きすぎます。', 413);
-    }
-    chunks.push(value);
-  }
-  let result: unknown;
-  try {
-    result = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  } catch {
-    throw new AuthError('JSON_INVALID', 'JSONが不正です。');
-  }
-  if (!result || typeof result !== 'object' || Array.isArray(result))
-    throw new AuthError('JSON_INVALID', 'JSONオブジェクトが必要です。');
-  return result as Record<string, unknown>;
-}
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ path: string[] }> },
@@ -89,12 +45,13 @@ export async function POST(
   context: { params: Promise<{ path: string[] }> },
 ) {
   const path = (await context.params).path.join('/');
-  if (!paths.includes(path)) return json({ error: 'Not found' }, 404);
+  if (!supportedPostPaths.includes(path))
+    return json({ error: 'Not found' }, 404);
   const trace: Trace[] = [];
   const service = new AuthService(database());
   const session = request.cookies.get(SESSION_COOKIE)?.value;
   const ceremony = request.cookies.get(CEREMONY_COOKIE)?.value;
-  const verify = path.endsWith('/verify');
+  const isVerificationRequest = path.endsWith('/verify');
   try {
     if (request.headers.get('origin') !== configuration().origin) {
       throw new AuthError(
@@ -103,7 +60,7 @@ export async function POST(
         403,
       );
     }
-    const body = await bodyOf(request);
+    const body = await readJsonBody(request);
     let response: NextResponse;
     if (path.endsWith('/options')) {
       const result =
@@ -136,7 +93,7 @@ export async function POST(
         ...cookieOptions(),
         maxAge: CHALLENGE_TTL / 1000,
       });
-    } else if (verify) {
+    } else if (isVerificationRequest) {
       const credential = body.credential;
       if (
         !credential ||
@@ -180,10 +137,7 @@ export async function POST(
         });
     } else {
       service.logout(session);
-      if (ceremony)
-        service.db
-          .prepare('DELETE FROM ceremonies WHERE token_hash=?')
-          .run(hash(ceremony));
+      service.invalidateCeremony(ceremony);
       response = json({ ok: true });
       response.cookies.set(SESSION_COOKIE, '', {
         ...cookieOptions(),
@@ -219,11 +173,8 @@ export async function POST(
       { error: message, code, ...(isDevelopment() ? { trace } : {}) },
       status,
     );
-    if (verify) {
-      if (ceremony)
-        service.db
-          .prepare('DELETE FROM ceremonies WHERE token_hash=?')
-          .run(hash(ceremony));
+    if (isVerificationRequest) {
+      service.invalidateCeremony(ceremony);
       response.cookies.set(CEREMONY_COOKIE, '', {
         ...cookieOptions(),
         maxAge: 0,
