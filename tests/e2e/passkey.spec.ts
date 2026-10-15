@@ -23,7 +23,7 @@ test('browser WebAuthn registration, discoverable login, extra passkey and devel
   );
   await page.goto('/register');
   await page
-    .getByLabel('ユーザー名', { exact: true })
+    .getByLabel('ユーザー名必須', { exact: true })
     .fill('browser_researcher');
   await page.getByRole('button', { name: 'パスキーを登録して作成' }).click();
   await expect(page.getByRole('status')).toContainText(
