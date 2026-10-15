@@ -1,4 +1,17 @@
 import Link from 'next/link';
+
 export default function Home() {
-  return <><section className="hero"><span className="eyebrow">AUTHENTICATION / EXPERIMENT 01</span><h1>パスキーの、その先を<br/>観察する。</h1><p>鍵が作られ、署名が確かめられ、ログインが成立するまで。<br/>WebAuthnの認証フローとセキュリティ検証を追跡する実験環境。</p><div className="actions"><Link className="button" href="/register">アカウントを作成 →</Link><Link className="button secondary" href="/login">パスキーでログイン</Link></div></section><section className="cards"><article className="panel"><span className="eyebrow">CREATE</span><h2>秘密鍵は認証器へ</h2><p>サーバーに保存するのは公開鍵と識別情報。discoverable credentialを要求し、ユーザー名なしでログインできます。</p></article><article className="panel"><span className="eyebrow">VERIFY</span><h2>サーバーで確かめる</h2><p>challenge、Origin、RP ID、署名、本人確認フラグを検証。認証できた場合にだけセッションを発行します。</p></article><article className="panel"><span className="eyebrow">OBSERVE</span><h2>通信と検証を追跡</h2><p>開発環境では送受信JSONと検証の目的を確認。応答の再送や改変が拒否される理由を観察できます。</p>{process.env.NODE_ENV === 'development' && <Link href="/lab">検証画面を開く →</Link>}</article></section><p className="notice">研究用の最小構成です。本番運用向けの認証保証はありません。秘密鍵・Cookie・セッション識別子は検証画面に表示しません。</p></>;
+  return (
+    <section className="panel narrow">
+      <h1>WebAuthn 検証</h1>
+      <div className="actions">
+        <Link className="button" href="/register">アカウント作成</Link>
+        <Link className="button secondary" href="/login">ログイン</Link>
+        <Link className="button secondary" href="/account">ユーザー情報</Link>
+        {process.env.NODE_ENV === 'development' && (
+          <Link className="button secondary" href="/lab">開発・検証</Link>
+        )}
+      </div>
+    </section>
+  );
 }
