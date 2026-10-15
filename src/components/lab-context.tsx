@@ -1,7 +1,7 @@
 'use client';
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import type { AuthenticationResponseJSON } from '@simplewebauthn/browser';
-export type Event = {
+export type LabEvent = {
   side: 'browser' | 'server';
   action: string;
   purpose: string;
@@ -10,43 +10,47 @@ export type Event = {
   time?: string;
 };
 type LabState = {
-  events: Event[];
-  record: (event: Event) => void;
+  events: LabEvent[];
+  record: (event: LabEvent) => void;
   clear: () => void;
   lastAssertion?: AuthenticationResponseJSON;
   saveAssertion: (value: AuthenticationResponseJSON) => void;
 };
-const Context = createContext<LabState | null>(null);
-export const dev = process.env.NODE_ENV === 'development';
+const LabContext = createContext<LabState | null>(null);
+const MAX_EVENTS = 80;
+
+export const isDevelopment = process.env.NODE_ENV === 'development';
 export function LabProvider({ children }: { children: ReactNode }) {
-  const [events, setEvents] = useState<Event[]>([]);
+  const [events, setEvents] = useState<LabEvent[]>([]);
   const [lastAssertion, saveAssertion] = useState<AuthenticationResponseJSON>();
-  function record(event: Event) {
-    if (dev)
-      setEvents((old) => [
-        ...old.slice(-79),
+  function record(event: LabEvent) {
+    if (isDevelopment)
+      setEvents((previousEvents) => [
+        ...previousEvents.slice(-(MAX_EVENTS - 1)),
         { ...event, time: new Date().toLocaleTimeString('ja-JP') },
       ]);
   }
+  function clear() {
+    setEvents([]);
+    saveAssertion(undefined);
+  }
+
   return (
-    <Context.Provider
+    <LabContext.Provider
       value={{
         events,
         record,
-        clear: () => {
-          setEvents([]);
-          saveAssertion(undefined);
-        },
+        clear,
         lastAssertion,
         saveAssertion,
       }}
     >
       {children}
-    </Context.Provider>
+    </LabContext.Provider>
   );
 }
 export function useLab() {
-  const value = useContext(Context);
+  const value = useContext(LabContext);
   if (!value) throw new Error('LabProvider missing');
   return value;
 }

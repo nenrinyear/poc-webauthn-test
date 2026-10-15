@@ -61,8 +61,17 @@ Next.js App Router / Node.js Route Handler
 - `src/lib/auth.ts`: 登録・認証・チャレンジの消費・セッション管理
 - `src/lib/db.ts`: SQLiteのスキーマとトランザクション
 - `src/lib/config.ts`: 固定RP ID、Origin、期限、開発環境判定
-- `src/app/api/[...path]/route.ts`: APIとCookieの設定、開発用の検証結果
-- `src/components/workbench.tsx`: ユーザー画面、ブラウザのWebAuthn呼び出し、拒否実験
+- `src/app/api/[...path]/route.ts`: APIの振り分け、Cookieの設定、開発用の検証結果
+- `src/lib/auth-http.ts`: サイズ制限付きJSON読み取り、キャッシュ禁止レスポンス、Cookie共通設定
+- `src/components/workbench.tsx`: 画面全体の構成と共通メッセージ
+- `src/components/use-workbench.ts`: 画面の状態、API通信、WebAuthn呼び出し、操作のエラー処理
+- `src/components/workbench-panels.tsx`: 登録フォーム、ログイン、アカウントとパスキーの表示
+- `src/components/lab-panel.tsx`: 認証フローの説明と拒否実験の操作
+- `src/components/trace-view.tsx`: ブラウザ・サーバーの記録表示
+- `src/components/lab-context.tsx`: タブ内で共有する直近80件の記録と実験用の認証応答
+- `src/lib/webauthn-debug.ts`: 観察・改変実験で使うBase64urlとclientDataJSONの変換
+
+操作の流れを読むときは、`workbench.tsx` → `use-workbench.ts` → `route.ts` → `auth.ts`の順にたどれます。認証の検証とDB更新は`AuthService`にまとめ、チャレンジを非同期検証前に消費する順序とトランザクションの境界を維持しています。
 - `src/components/lab-context.tsx`: タブ内メモリに限定した開発用記録
 - `tests/auth.test.ts`: 本物のライブラリと独立したソフトウェア認証器入力を使用したテスト
 - `tests/e2e/passkey.spec.ts`: Chromiumの仮想認証器を利用したブラウザテスト
