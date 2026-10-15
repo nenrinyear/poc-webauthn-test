@@ -4,6 +4,7 @@ import type { RejectionExperiment } from '@/lib/webauthn-debug';
 import { useLab } from './lab-context';
 import { TraceView } from './trace-view';
 
+// 種類とラベルを同じ場所で定義し、ボタンの表示と実行内容がずれないようにする。
 const experiments: { kind: RejectionExperiment; label: string }[] = [
   { kind: 'replay', label: '応答を再送' },
   { kind: 'challenge', label: 'challengeを改変' },
@@ -23,6 +24,7 @@ export function LabPanel({
   onExperiment: (kind: RejectionExperiment) => void;
 }) {
   const lab = useLab();
+
   return (
     <>
       <section className="panel">

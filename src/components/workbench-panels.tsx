@@ -17,6 +17,7 @@ export type Profile = {
 
 type ActionState = { busy: boolean; disabled: boolean };
 
+// 入力値と操作コールバックを受け取り、登録フォームの表示を担当する。
 export function RegisterPanel({
   username,
   setUsername,
@@ -86,6 +87,7 @@ export function LoginPanel({
   );
 }
 
+// 読み込み中・未ログイン・ログイン済みの3つの表示を切り替える。
 export function AccountPanel({
   profile,
   loaded,

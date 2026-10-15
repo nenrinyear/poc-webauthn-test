@@ -72,7 +72,7 @@ test('browser WebAuthn registration, discoverable login, extra passkey and devel
   await expect(
     page.getByRole('heading', { name: 'browser_researcher', exact: true }),
   ).toBeVisible();
-  // A second virtual authenticator models an additional physical device.
+  // 別の端末からパスキーを追加する状況を、2台目の仮想認証器で再現する。
   await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
   await cdp.send('WebAuthn.addVirtualAuthenticator', {
     options: {

@@ -1,4 +1,5 @@
-/* DADS: 16px body text, 8px spacing, explicit action hierarchy and visible focus. */
+/* 本文は16px、余白は8px単位を基本にし、主要操作とキーボードフォーカスを明確にする。 */
+/* 色の共通定義 */
 :root {
   --ink: #1a1a1a;
   --muted: #595959;
@@ -10,9 +11,11 @@
   --error: #c62828;
 }
 
+/* ページ全体とリンク */
 * {
   box-sizing: border-box;
 }
+
 body {
   margin: 0;
   background: #fff;
@@ -26,17 +29,22 @@ body {
     sans-serif;
   overflow-wrap: anywhere;
 }
+
 a {
   color: var(--accent);
   text-underline-offset: 4px;
 }
+
 a:visited {
   color: #8b008b;
 }
+
 a:hover {
   color: var(--accent-hover);
   text-decoration-thickness: 3px;
 }
+
+/* ヘッダーとナビゲーション */
 header {
   background: #fff;
   border-top: 8px solid var(--accent);
@@ -47,6 +55,7 @@ header {
   align-items: center;
   gap: 24px;
 }
+
 .brand,
 .brand:visited {
   display: flex;
@@ -57,14 +66,17 @@ header {
   font-weight: 700;
   color: var(--ink);
 }
+
 .brand b {
   font-weight: 400;
 }
+
 nav {
   display: flex;
   gap: 24px;
   flex-wrap: wrap;
 }
+
 nav a,
 nav a:visited {
   display: inline-flex;
@@ -73,50 +85,63 @@ nav a:visited {
   color: var(--ink);
   text-decoration: underline;
 }
+
 main {
   max-width: 1140px;
   margin: 0 auto;
   padding: 48px 24px 80px;
   min-height: 80vh;
 }
+
+/* 見出しと説明文 */
 h1,
 h2,
 h3 {
   line-height: 1.5;
   font-weight: 700;
 }
+
 h1 {
   font-size: 36px;
   margin: 16px 0 24px;
 }
+
 h2 {
   font-size: 24px;
   margin: 24px 0 16px;
 }
+
 h3 {
   font-size: 20px;
 }
+
 p {
   margin: 16px 0 24px;
 }
+
 .eyebrow {
   font-size: 16px;
   line-height: 1.5;
   color: var(--accent);
   font-weight: 700;
 }
+
 .hero {
   padding: 32px 0 64px;
 }
+
 .hero h1 {
   font-size: clamp(36px, 5vw, 56px);
   line-height: 1.5;
   margin: 24px 0;
 }
+
 .hero p {
   color: var(--muted);
   font-size: 20px;
 }
+
+/* 画面を囲むパネルとカード */
 .panel {
   background: #fff;
   border: 1px solid var(--line);
@@ -125,30 +150,37 @@ p {
   margin-bottom: 24px;
   min-width: 0;
 }
+
 .narrow {
   max-width: 680px;
   margin: 32px auto;
 }
+
 .cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 24px;
   margin-bottom: 40px;
 }
+
 .cards .panel {
   padding: 24px;
   border-top: 4px solid var(--accent);
   margin-bottom: 0;
 }
+
 .cards p {
   color: var(--muted);
 }
+
+/* 操作ボタンと状態ごとの見た目 */
 .actions {
   display: flex;
   gap: 16px;
   flex-wrap: wrap;
   margin: 24px 0;
 }
+
 button,
 .button,
 .button:visited {
@@ -169,6 +201,7 @@ button,
   line-height: 1.5;
   max-width: 100%;
 }
+
 button:hover,
 .button:hover {
   background: var(--accent-hover);
@@ -176,10 +209,12 @@ button:hover,
   color: #fff;
   text-decoration: underline;
 }
+
 button:active,
 .button:active {
   background: #000071;
 }
+
 button:disabled {
   color: #757575;
   background: #e6e6e6;
@@ -187,33 +222,41 @@ button:disabled {
   cursor: not-allowed;
   text-decoration: none;
 }
+
 .secondary,
 .secondary:visited {
   color: var(--accent);
   background: #fff;
   border-color: var(--accent);
 }
+
 .secondary:hover {
   color: var(--accent-hover);
   background: #e8f1fe;
 }
+
+/* 登録フォームとキーボード操作時のフォーカス */
 form {
   display: grid;
   gap: 8px;
   margin: 32px 0;
 }
+
 form button {
   margin-top: 16px;
   justify-self: start;
 }
+
 label {
   font-weight: 700;
 }
+
 .required {
   margin-left: 8px;
   color: var(--error);
   font-size: 16px;
 }
+
 input {
   font: inherit;
   width: 100%;
@@ -224,12 +267,15 @@ input {
   color: var(--ink);
   background: #fff;
 }
+
 input:hover {
   border-color: var(--ink);
 }
+
 input::placeholder {
   color: #757575;
 }
+
 :where(input, button, a, summary):focus-visible {
   outline: 4px solid #1a1a1a;
   outline-offset: 2px;
@@ -237,11 +283,14 @@ input::placeholder {
     0 0 0 2px #fff,
     0 0 0 8px #ffd43d;
 }
+
 small,
 .muted {
   color: var(--muted);
   font-size: 16px;
 }
+
+/* 操作結果と補助メッセージ */
 .notice {
   background: #f0f5ff;
   border: 1px solid var(--accent);
@@ -250,17 +299,22 @@ small,
   padding: 24px;
   overflow-wrap: anywhere;
 }
+
 .compact {
   margin-top: 32px;
   padding: 24px;
   background: var(--paper);
 }
+
 .compact h2 {
   margin: 0;
 }
+
 .compact p {
   margin-bottom: 0;
 }
+
+/* アカウント情報と登録済みパスキー */
 .account-head {
   display: flex;
   justify-content: space-between;
@@ -268,43 +322,53 @@ small,
   gap: 24px;
   flex-wrap: wrap;
 }
+
 .account-head button {
   flex-shrink: 0;
 }
+
 .key {
   border: 1px solid var(--line);
   padding: 24px;
   border-radius: 8px;
   margin: 16px 0;
 }
+
 .key h3 {
   margin-top: 0;
 }
+
 dl {
   display: grid;
   grid-template-columns: 192px minmax(0, 1fr);
   gap: 16px;
 }
+
 dt {
   color: var(--muted);
 }
+
 dd {
   margin: 0;
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
 .count {
   font-size: 16px;
   background: #e6e6e6;
   border-radius: 9999px;
   padding: 4px 12px;
 }
+
+/* 検証画面のフロー図と通信記録 */
 .flow {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   margin: 32px 0;
 }
+
 .flow div {
   padding: 24px 16px;
   border: 1px solid var(--line);
@@ -312,18 +376,22 @@ dd {
   border-radius: 8px;
   background: var(--paper);
 }
+
 .flow b,
 .flow span {
   display: block;
 }
+
 .flow span {
   color: var(--muted);
   margin-top: 8px;
 }
+
 .events {
   list-style: none;
   padding: 0;
 }
+
 .event {
   border: 1px solid var(--line);
   border-left: 8px solid var(--accent);
@@ -331,19 +399,23 @@ dd {
   padding: 24px;
   margin: 16px 0;
 }
+
 .event.server {
   border-left-color: var(--success);
 }
+
 .event-title {
   display: flex;
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
 }
+
 .event-title time {
   margin-left: auto;
   color: var(--muted);
 }
+
 .badge {
   font-size: 16px;
   font-weight: 700;
@@ -351,22 +423,28 @@ dd {
   background: #e8f1fe;
   padding: 4px 8px;
 }
+
 .server .badge {
   color: var(--success);
   background: #e6f5ec;
 }
+
 .result {
   color: var(--muted);
 }
+
 .result.passed {
   color: var(--success);
 }
+
 .result.failed {
   color: var(--error);
 }
+
 .event p {
   margin: 16px 0;
 }
+
 summary {
   cursor: pointer;
   color: var(--accent);
@@ -374,6 +452,7 @@ summary {
   text-underline-offset: 4px;
   padding: 8px 0;
 }
+
 pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -387,15 +466,18 @@ pre {
     ui-monospace,
     monospace;
 }
+
 code {
   font-family: 'Noto Sans Mono', ui-monospace, monospace;
 }
+
 .empty {
   padding: 32px;
   text-align: center;
   color: var(--muted);
   background: var(--paper);
 }
+
 footer {
   border-top: 1px solid var(--line);
   padding: 32px 24px;
@@ -403,61 +485,80 @@ footer {
   color: var(--muted);
   font-size: 14px;
 }
+
+/* 狭い画面ではナビゲーションを縦にし、フロー図の列数を減らす。 */
 @media (max-width: 960px) {
   header {
     align-items: flex-start;
     flex-direction: column;
   }
+
   .cards {
     grid-template-columns: 1fr;
   }
+
   .flow {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* スマートフォンでは余白を縮め、ボタンと詳細項目を縦に並べる。 */
 @media (max-width: 600px) {
   header {
     padding: 16px;
     gap: 16px;
   }
+
   .brand {
     font-size: 20px;
   }
+
   nav {
     gap: 8px 24px;
   }
+
   main {
     padding: 24px 16px 48px;
   }
+
   h1 {
     font-size: 28px;
   }
+
   .hero {
     padding: 16px 0 40px;
   }
+
   .hero p {
     font-size: 16px;
   }
+
   .panel {
     padding: 24px 16px;
   }
+
   .narrow {
     margin: 0 auto 24px;
   }
+
   .actions {
     flex-direction: column;
     align-items: stretch;
   }
+
   .flow {
     grid-template-columns: 1fr;
   }
+
   dl {
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;
   }
+
   dd {
     margin-bottom: 16px;
   }
+
   .notice,
   .key,
   .event {

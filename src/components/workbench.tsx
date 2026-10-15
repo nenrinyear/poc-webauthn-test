@@ -6,9 +6,11 @@ import { AccountPanel, LoginPanel, RegisterPanel } from './workbench-panels';
 import { LabPanel } from './lab-panel';
 import { useWorkbench, type WorkbenchMode } from './use-workbench';
 
+// ここでは画面の組み立てに集中し、通信と認証器の操作はuseWorkbenchへ委ねる。
 export function Workbench({ mode }: { mode: WorkbenchMode }) {
   const lab = useLab();
   const workbench = useWorkbench(mode);
+
   const { busy, disabled, message, supported } = workbench;
 
   return (

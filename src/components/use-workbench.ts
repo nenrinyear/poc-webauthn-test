@@ -1,4 +1,5 @@
 'use client';
+
 import { useEffect, useState } from 'react';
 import {
   startRegistration,
@@ -24,8 +25,10 @@ type ApiReply<Payload> = Payload & {
   error?: string;
 };
 
+// 各画面で使う状態と操作をまとめる。表示用コンポーネントには処理済みの値とコールバックを渡す。
 export function useWorkbench(mode: WorkbenchMode) {
   const lab = useLab();
+
   const [username, setUsername] = useState('');
   const [profile, setProfile] = useState<Profile>();
   const [busy, setBusy] = useState(false);
@@ -34,7 +37,10 @@ export function useWorkbench(mode: WorkbenchMode) {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
+    // windowを参照するため、ブラウザでの描画後に対応状況を判定する。
     setSupported(browserSupportsWebAuthn() && window.isSecureContext);
+
+    // セッションCookieは読まず、サーバーにログイン状態を問い合わせる。
     if (mode === 'account') {
       fetch('/api/me', { cache: 'no-store' })
         .then(async (response) => {
@@ -48,6 +54,7 @@ export function useWorkbench(mode: WorkbenchMode) {
 
   async function refreshProfile() {
     const response = await fetch('/api/me', { cache: 'no-store' });
+
     setProfile(response.ok ? await response.json() : undefined);
   }
 
@@ -62,12 +69,14 @@ export function useWorkbench(mode: WorkbenchMode) {
       result: 'info',
       details: body,
     });
+
     const response = await fetch(`/api/${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     const data: ApiReply<Payload> = await response.json();
+
     lab.record({
       side: 'browser',
       action: `HTTP ${response.status} /api/${path}`,
@@ -75,20 +84,26 @@ export function useWorkbench(mode: WorkbenchMode) {
       result: response.ok ? 'passed' : 'failed',
       details: data,
     });
+
+    // ブラウザの観測と、サーバーから返された検証記録を分けて残す。
     data.trace?.forEach(lab.record);
     if (!response.ok)
       throw new Error(data.error ?? 'リクエストが失敗しました。');
+
     return data;
   }
 
+  // 操作中の表示とエラー処理を共通化し、キャンセルした場合も操作可能な状態へ戻す。
   async function run(work: () => Promise<void>) {
     setBusy(true);
     setMessage('');
+
     try {
       await work();
     } catch (error) {
       const reason = error instanceof Error ? error.message : '不明なエラー';
       setMessage(reason);
+
       lab.record({
         side: 'browser',
         action: '操作終了 / エラー',
@@ -104,9 +119,13 @@ export function useWorkbench(mode: WorkbenchMode) {
 
   async function register(addingPasskey: boolean) {
     const base = addingPasskey ? 'passkeys' : 'register';
+
+    // 1. サーバーから、今回の登録に使うchallengeと認証器の条件を取得する。
     const { options } = await postApi<{
       options: PublicKeyCredentialCreationOptionsJSON;
     }>(`${base}/options`, addingPasskey ? {} : { username });
+
+    // 2. 認証器に鍵の作成を依頼する。秘密鍵はこのコードへ返されない。
     lab.record({
       side: 'browser',
       action: 'navigator.credentials.create()',
@@ -127,19 +146,26 @@ export function useWorkbench(mode: WorkbenchMode) {
         clientData: decodeClientData(credential.response.clientDataJSON),
       },
     });
+
+    // 3. 取得した応答をサーバーへ送り、検証と保存の成功を待つ。
     await postApi(`${base}/verify`, { credential });
+
     setMessage(
       addingPasskey
         ? 'パスキーを追加しました。'
         : 'アカウントを作成し、ログインしました。',
     );
+
     if (addingPasskey) await refreshProfile();
   }
 
   async function login() {
+    // 1. ユーザー名を送らず、今回の認証用challengeを取得する。
     const { options } = await postApi<{
       options: PublicKeyCredentialRequestOptionsJSON;
     }>('authenticate/options');
+
+    // 2. 利用者にパスキーを選んでもらい、認証器から署名付き応答を受け取る。
     lab.record({
       side: 'browser',
       action: 'navigator.credentials.get()',
@@ -161,24 +187,36 @@ export function useWorkbench(mode: WorkbenchMode) {
         clientData: decodeClientData(credential.response.clientDataJSON),
       },
     });
+
+    // 3. サーバーで署名検証が成功するまでは、認証成功として扱わない。
     await postApi('authenticate/verify', { credential });
+
+    // 正常な応答を拒否実験に使うため、開発時だけタブ内のメモリに保持する。
     if (isDevelopment) lab.saveAssertion(credential);
+
     setMessage('パスキー認証に成功しました。ユーザー情報を確認できます。');
   }
 
   async function experiment(kind: RejectionExperiment) {
     if (!lab.lastAssertion)
       throw new Error('先に「正常な認証」を実行してください。');
+
+    // 保存した正常な応答を壊さないよう、実験にはコピーを使う。
     const credential: AuthenticationResponseJSON = structuredClone(
       lab.lastAssertion,
     );
+
+    // 再送実験は使用済みchallengeのまま送り、それ以外は新しいフローを開始する。
     if (kind !== 'replay') {
       const { options } = await postApi<{
         options: PublicKeyCredentialRequestOptionsJSON;
       }>('authenticate/options');
+
       const data = decodeClientData(
         credential.response.clientDataJSON,
       ) as Record<string, unknown>;
+
+      // 改変対象以外のchallengeは今回の値に置き換える。ただし元の署名は再生成しない。
       data.challenge =
         kind === 'challenge'
           ? 'intentionally-wrong-challenge'
@@ -187,12 +225,15 @@ export function useWorkbench(mode: WorkbenchMode) {
       credential.response.clientDataJSON = encodeBase64url(
         JSON.stringify(data),
       );
+
       if (kind === 'rpid') {
+        // authenticatorDataの先頭32バイトがrpIdHash。先頭の1バイトを反転する。
         const bytes = decodeBase64url(credential.response.authenticatorData);
         bytes[0] ^= 0xff;
         credential.response.authenticatorData = encodeBase64url(bytes);
       }
     }
+
     lab.record({
       side: 'browser',
       action: `拒否実験: ${kind}`,
@@ -216,6 +257,7 @@ export function useWorkbench(mode: WorkbenchMode) {
     setMessage('ログアウトしました。');
   }
 
+  // ボタンから呼ぶ操作はすべてrunを経由し、エラーを画面のメッセージへ変換する。
   return {
     username,
     setUsername,

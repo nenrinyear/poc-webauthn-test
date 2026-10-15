@@ -2,11 +2,13 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { LabProvider } from '@/components/lab-context';
 import './globals.css';
+
 export const metadata: Metadata = {
   title: 'WebAuthn Research Lab',
   description:
     'パスキーの登録・認証とサーバー検証を観察する研究用アプリケーション',
 };
+
 export default function RootLayout({
   children,
 }: {
@@ -15,6 +17,7 @@ export default function RootLayout({
   return (
     <html lang="ja">
       <body>
+        {/* 画面間の移動でも、同じタブの操作記録を引き継ぐ。 */}
         <LabProvider>
           <header>
             <Link className="brand" href="/">

@@ -2,8 +2,10 @@
 
 import { useLab } from './lab-context';
 
+// ブラウザ側の観測とサーバー側の検証結果を色分けし、詳細は折りたたんで表示する。
 export function TraceView() {
   const lab = useLab();
+
   return (
     <section className="panel">
       <div className="account-head">

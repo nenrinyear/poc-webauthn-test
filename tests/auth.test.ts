@@ -20,11 +20,12 @@ import { AuthService, AuthError, hash } from '../src/lib/auth';
 import { openDatabase } from '../src/lib/db';
 import { CHALLENGE_TTL, SESSION_TTL } from '../src/lib/config';
 
-// Software authenticator fixtures exist only in tests. Production delegates all WebAuthn verification to SimpleWebAuthn.
+// 認証器の代わりに鍵と署名を作る処理はテスト専用。アプリ本体の検証はSimpleWebAuthnに委ねる。
 const b64 = (data: Uint8Array | string) =>
   Buffer.from(data).toString('base64url');
 const sha = (data: Uint8Array | string) =>
   createHash('sha256').update(data).digest();
+// P-256の公開鍵を、WebAuthnで扱うCOSE形式へ変換する。
 function keyPair() {
   const pair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const jwk = pair.publicKey.export({ format: 'jwk' });
@@ -39,13 +40,18 @@ function keyPair() {
   );
   return { privateKey: pair.privateKey, cose, id: b64(randomBytes(32)) };
 }
+
 type FixtureKey = ReturnType<typeof keyPair>;
+
+// RP IDのハッシュに、フラグ1バイトとカウンター4バイトを続ける。
 function authData(rp = 'localhost', flags = 0x05, counter = 1) {
   const tail = Buffer.alloc(5);
   tail[0] = flags;
   tail.writeUInt32BE(counter, 1);
   return Buffer.concat([sha(rp), tail]);
 }
+
+// 正常な登録応答を基本に、changesで拒否条件だけを差し替える。
 function registration(
   options: PublicKeyCredentialCreationOptionsJSON,
   key: FixtureKey,
@@ -93,6 +99,8 @@ function registration(
     },
   };
 }
+
+// 改変した内容に対して署名し、署名破損と各検証条件の失敗を区別する。
 function assertion(
   challenge: string,
   userID: string,
@@ -137,6 +145,8 @@ function assertion(
     },
   };
 }
+
+// 時計を注入し、実際に待たずにチャレンジとセッションの期限を検証する。
 function setup() {
   const db = openDatabase(':memory:');
   let clock = Date.now();
@@ -148,6 +158,7 @@ function setup() {
     },
   };
 }
+
 async function account(service: AuthService, name = 'researcher') {
   const key = keyPair();
   const start = await service.registrationOptions(name, false);
@@ -158,6 +169,7 @@ async function account(service: AuthService, name = 'researcher') {
   );
   return { key, session: result.session!, userID: start.options.user.id };
 }
+
 async function rejectsReason(work: Promise<unknown>, pattern: RegExp) {
   await assert.rejects(
     work,
